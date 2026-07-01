@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WebView / Browser Probe</title>
+<style>
+  body{font:13px/1.6 -apple-system,monospace;margin:0;padding:8px;background:#111;color:#0f0}
+  h3{margin:6px 0;color:#fff}
+  button{padding:11px 13px;margin:3px;font-size:15px}
+  #status{color:#ff0;font-weight:bold}
+  pre{white-space:pre-wrap;word-break:break-all;background:#000;padding:8px;max-height:50vh;overflow:auto;font-size:12px}
+  input{font-size:16px;width:52%}
+  .er{background:#000;color:#0f0;padding:6px;white-space:pre-wrap;max-height:30vh;overflow:auto}
+</style>
+</head>
+<body>
+<script src="eruda.js"></script><script>try{eruda.init();}catch(e){}</script>
+
+<h3 id="h">probing…</h3>
+<div id="status">—</div>
+
+<div>
+  <button onclick="EV('window.MiWebViewDetector')">MiWebViewDetector</button>
+  <button onclick="EV('window.android')">android</button>
+  <button onclick="EV('window.vivoManualAdBlock')">vivoManualAdBlock</button>
+  <button onclick="EV('window.chrome')">window.chrome</button>
+  <button onclick="EV(\"Object.getOwnPropertyNames(window).filter(function(k){return /vivo|VIVO|block|exe_|Mi|Hey|miui|Hybrid|Bridge/i.test(k)}).join(', ')\")">OEM 注入全局</button>
+  <button onclick="copyOut()">复制 JSON</button>
+</div>
+<div><input id="EI" placeholder="自定义表达式"> <button onclick="EV(document.getElementById('EI').value)">RUN</button></div>
+<pre id="er" class="er">eval 结果 →</pre>
+
+<pre id="o"></pre>
+
+<script>
+// ==== 结果收集器（GitHub Pages 静态托管收不了 POST，改发到公网收集器）====
+const COLLECTOR = 'https://webhook.site/7a189374-543f-4fc5-9350-93ec5328c273';
+
+function EV(x){var o=document.getElementById('er');try{var r=eval(x);var s=(typeof r==='object'&&r!==null)?(Object.prototype.toString.call(r)+' keys='+JSON.stringify(Object.getOwnPropertyNames(r)).slice(0,400)):String(r);o.textContent=x+'\n=> ['+typeof r+'] '+s;}catch(e){o.textContent=x+'\n!! '+e;}}
+function copyOut(){var t=document.getElementById('o').textContent;try{navigator.clipboard.writeText(t);document.getElementById('status').textContent='已复制到剪贴板';}catch(e){document.getElementById('status').textContent='复制失败:'+e;}}
+
+(async function(){
+  const src = new URLSearchParams(location.search).get('src') || 'unknown';
+  const typ = (v)=>{try{return typeof v}catch(e){return 'err'}};
+  const has = (o,k)=>{try{const v=o[k];return (typeof v==='undefined')?false:(v===null?'null':typ(v))}catch(e){return 'err'}};
+  const n = navigator, w = window, s = screen;
+
+  function introspectObj(o){ try{ if(o===undefined||o===null) return String(o);
+    var r={type:typeof o, str:String(o).slice(0,120), ctor:null, own:[], proto:[], methods:{}};
+    try{ r.ctor=o.constructor&&o.constructor.name; }catch(e){}
+    try{ r.own=Object.getOwnPropertyNames(o); }catch(e){}
+    try{ var p=Object.getPrototypeOf(o); if(p && p!==Object.prototype){ r.proto=Object.getOwnPropertyNames(p);
+      r.proto.forEach(function(k){ try{ var fn=o[k]; if(typeof fn==='function') r.methods[k]=String(fn).slice(0,90); }catch(e){} }); } }catch(e){}
+    return r; }catch(e){ return 'err:'+e; } }
+  function introspect(name){ return introspectObj(w[name]); }
+
+  let highEntropy=null, heErr=null;
+  try{ if(n.userAgentData){ highEntropy = await n.userAgentData.getHighEntropyValues(["architecture","bitness","model","platformVersion","uaFullVersion","fullVersionList","wow64","formFactors"]); } }catch(e){ heErr=String(e); }
+
+  let chromeObj=null;
+  try{ if(typeof w.chrome!=='undefined' && w.chrome!==null){ chromeObj={ keys:Object.keys(w.chrome), app:typ(w.chrome.app), runtime:typ(w.chrome.runtime), loadTimes:typ(w.chrome.loadTimes), csi:typ(w.chrome.csi) }; } }catch(e){ chromeObj='err'; }
+
+  const probe={};
+  ['MiWebViewDetector','android','miui','miuiControl','security'].forEach(function(k){ probe[k]=introspect(k); });
+  try{ probe['android.webview']= (w.android!=null && w.android.webview!==undefined) ? introspectObj(w.android.webview) : 'no-android.webview'; }catch(e){ probe['android.webview']='err'; }
+
+  const feat={};
+  for(const k of ["Notification","RTCPeerConnection","SharedArrayBuffer","PaymentRequest","speechSynthesis"]) feat["window."+k]=typ(w[k]);
+  for(const k of ["bluetooth","usb","serial","share","getInstalledRelatedApps","deviceMemory","hardwareConcurrency","webdriver","pdfViewerEnabled"]) feat["navigator."+k]=has(n,k);
+
+  let webgl=null;
+  try{ const c=document.createElement('canvas'); const gl=c.getContext('webgl'); if(gl){ const dbg=gl.getExtension('WEBGL_debug_renderer_info'); webgl={ unmaskedVendor:dbg?gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL):null, unmaskedRenderer:dbg?gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL):null }; } }catch(e){}
+
+  const dump={
+    src, ts: Date.now(),
+    ua: n.userAgent, platform: n.platform, vendor: n.vendor,
+    languages: n.languages, hardwareConcurrency: n.hardwareConcurrency, deviceMemory: n.deviceMemory,
+    maxTouchPoints: n.maxTouchPoints, webdriver: has(n,'webdriver'),
+    userAgentData: n.userAgentData?{brands:n.userAgentData.brands,mobile:n.userAgentData.mobile,platform:n.userAgentData.platform}:null,
+    highEntropy, heErr,
+    chrome: chromeObj,
+    plugins: (function(){try{var a=[];for(const p of n.plugins)a.push(p.name);return a}catch(e){return 'err'}})(),
+    win:{innerW:w.innerWidth,innerH:w.innerHeight,outerW:w.outerWidth,outerH:w.outerHeight,dpr:w.devicePixelRatio},
+    webgl, features: feat, probe,
+    windowKeys: Object.getOwnPropertyNames(w)
+  };
+
+  document.getElementById('h').textContent = src+'  window.chrome='+(chromeObj?'PRESENT':'undefined')+'  MiWebViewDetector='+(probe.MiWebViewDetector!=='undefined'?'有':'无');
+  document.getElementById('o').textContent = JSON.stringify(dump,null,2);
+
+  // 发到收集器（text/plain = 简单请求，跨域无预检；fire-and-forget）
+  try{
+    await fetch(COLLECTOR, {method:'POST', headers:{'Content-Type':'text/plain'}, body: JSON.stringify(dump)});
+    document.getElementById('status').textContent = '✅ 已上报收集器 (src='+src+')';
+  }catch(e){
+    document.getElementById('status').textContent = '⚠️ 上报失败:'+e+' —— 用上面「复制 JSON」手动发';
+  }
+})();
+</script>
+</body>
+</html>
