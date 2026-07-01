@@ -31,14 +31,14 @@
 <div><input id="EI" placeholder="自定义表达式"> <button onclick="EV(document.getElementById('EI').value)">RUN</button></div>
 <pre id="er" class="er">eval 结果 →</pre>
 
-<pre id="o"></pre>
+<textarea id="o" readonly placeholder="结果 JSON…" style="width:100%;height:42vh;background:#000;color:#0f0;font-size:12px;border:1px solid #0f0"></textarea>
 
 <script>
 // ==== 结果收集器（GitHub Pages 静态托管收不了 POST，改发到公网收集器）====
 const COLLECTOR = 'https://webhook.site/7a189374-543f-4fc5-9350-93ec5328c273';
 
 function EV(x){var o=document.getElementById('er');try{var r=eval(x);var s=(typeof r==='object'&&r!==null)?(Object.prototype.toString.call(r)+' keys='+JSON.stringify(Object.getOwnPropertyNames(r)).slice(0,400)):String(r);o.textContent=x+'\n=> ['+typeof r+'] '+s;}catch(e){o.textContent=x+'\n!! '+e;}}
-function copyOut(){var t=document.getElementById('o').textContent;try{navigator.clipboard.writeText(t);document.getElementById('status').textContent='已复制到剪贴板';}catch(e){document.getElementById('status').textContent='复制失败:'+e;}}
+function copyOut(){var el=document.getElementById('o');el.focus();el.select();try{el.setSelectionRange(0,999999);}catch(e){}var st=document.getElementById('status');var ok=false;try{ok=document.execCommand('copy');}catch(e){}if(ok){st.textContent='✅ 已复制，去对话粘贴发我';return;}if(navigator.clipboard){navigator.clipboard.writeText(el.value).then(function(){st.textContent='✅ 已复制，去对话粘贴发我';}).catch(function(){st.textContent='⚠️ 自动复制失败——文本已选中，手动点系统「复制」';});return;}st.textContent='⚠️ 文本已选中，手动点系统「复制」';}
 
 (async function(){
   const src = new URLSearchParams(location.search).get('src') || 'unknown';
@@ -87,7 +87,7 @@ function copyOut(){var t=document.getElementById('o').textContent;try{navigator.
   };
 
   document.getElementById('h').textContent = src+'  window.chrome='+(chromeObj?'PRESENT':'undefined')+'  MiWebViewDetector='+(probe.MiWebViewDetector!=='undefined'?'有':'无');
-  document.getElementById('o').textContent = JSON.stringify(dump,null,2);
+  document.getElementById('o').value = JSON.stringify(dump,null,2);
 
   // 发到收集器：text/plain + no-cors = 简单请求、跨域无预检、fire-and-forget。
   // webhook.site 不回 Access-Control-Allow-Origin，用默认 cors 模式会误报
