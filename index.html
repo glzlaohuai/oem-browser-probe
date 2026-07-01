@@ -15,7 +15,7 @@
 </style>
 </head>
 <body>
-<script src="eruda.js"></script><script>try{eruda.init();}catch(e){}</script>
+<script src="https://glzlaohuai.github.io/oem-browser-probe/eruda.js"></script><script>try{eruda.init();}catch(e){}</script>
 
 <h3 id="h">probing…</h3>
 <div id="status">—</div>
@@ -38,6 +38,8 @@
 // anon key 只能 INSERT（RLS 挡住读/改/删），公开无妨；service_role 不放这页。
 const SUPABASE_URL  = 'https://nzlbzcwlvpcbpkqigvnk.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im56bGJ6Y3dsdnBjYnBrcWlndm5rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4ODQzMzIsImV4cCI6MjA5ODQ2MDMzMn0.MdruKciObFcznirZES2y85OAFw7MARykBnZrjJ72KBY';
+// echo 端点：读回 JS 拿不到的真实请求头（X-Requested-With / Sec-CH-UA / Accept-Language）。同源 Edge Function。
+const ECHO_URL = SUPABASE_URL + '/functions/v1/echo-headers';
 
 function EV(x){var o=document.getElementById('er');try{var r=eval(x);var s=(typeof r==='object'&&r!==null)?(Object.prototype.toString.call(r)+' keys='+JSON.stringify(Object.getOwnPropertyNames(r)).slice(0,400)):String(r);o.textContent=x+'\n=> ['+typeof r+'] '+s;}catch(e){o.textContent=x+'\n!! '+e;}}
 function copyOut(){var el=document.getElementById('o');el.focus();el.select();try{el.setSelectionRange(0,999999);}catch(e){}var st=document.getElementById('status');var ok=false;try{ok=document.execCommand('copy');}catch(e){}if(ok){st.textContent='✅ 已复制，去对话粘贴发我';return;}if(navigator.clipboard){navigator.clipboard.writeText(el.value).then(function(){st.textContent='✅ 已复制，去对话粘贴发我';}).catch(function(){st.textContent='⚠️ 自动复制失败——文本已选中，手动点系统「复制」';});return;}st.textContent='⚠️ 文本已选中，手动点系统「复制」';}
@@ -47,6 +49,19 @@ function copyOut(){var el=document.getElementById('o');el.focus();el.select();tr
   const typ = (v)=>{try{return typeof v}catch(e){return 'err'}};
   const has = (o,k)=>{try{const v=o[k];return (typeof v==='undefined')?false:(v===null?'null':typ(v))}catch(e){return 'err'}};
   const n = navigator, w = window, s = screen;
+
+  // ==== 请求头 echo（硬前置）：JS 读不到请求头，靠同域 Edge Function 回显 ====
+  // 两次 fetch 做 Client Hints 高熵协商：第一次触发 Accept-CH，第二次才带高熵 CH 头，取第二次。
+  // ⚠️ echo 拿不到请求头 = 本条残缺 → 直接丢弃、不入库（保证 probe_results 每条必含 reqHeaders）。
+  let reqHeaders=null;
+  try{
+    await fetch(ECHO_URL, {cache:'no-store'});
+    reqHeaders = await (await fetch(ECHO_URL, {cache:'no-store'})).json();
+  }catch(e){
+    document.getElementById('h').textContent = src+'  ⚠️ 请求头采集失败';
+    document.getElementById('status').textContent = '⚠️ 请求头 echo 失败（'+e+'）→ 本条丢弃、未入库，请重试或检查 echo 端点';
+    return;
+  }
 
   function introspectObj(o){ try{ if(o===undefined||o===null) return String(o);
     var r={type:typeof o, str:String(o).slice(0,120), ctor:null, own:[], proto:[], methods:{}};
@@ -64,24 +79,111 @@ function copyOut(){var el=document.getElementById('o');el.focus();el.select();tr
   try{ if(typeof w.chrome!=='undefined' && w.chrome!==null){ chromeObj={ keys:Object.keys(w.chrome), app:typ(w.chrome.app), runtime:typ(w.chrome.runtime), loadTimes:typ(w.chrome.loadTimes), csi:typ(w.chrome.csi) }; } }catch(e){ chromeObj='err'; }
 
   const probe={};
-  ['MiWebViewDetector','android','miui','miuiControl','security'].forEach(function(k){ probe[k]=introspect(k); });
+  // 深度内省（Tier3）：① 检测 tell（MiWebViewDetector=MIUI OS 注入、android=Media Integrity §4）；
+  //   ② 各厂商浏览器"正向标记"bridge（§2/§5）——伪装 WebView 缺这些，会被"查有没有厂商特征"反向识破，
+  //   采全 shape(type/ctor/own/proto/methods) 以评估要不要造。未定义位记 "undefined"，体积可忽略。
+  [
+    'MiWebViewDetector','android',
+    // 小米 Mi Browser 自有 bridge（9，本业务主目标）
+    'miui','MiHybrid','DouyinBridge','OneSearchBridge','FluencyWatchJsBridge','miuiControl','security','quicksearchbox_api','AICreateMonitor',
+    // 三星 Internet
+    'SILanguageTranslator','SITranslation','sitranslation',
+    // OPPO / HeyTap
+    'HeyKernel','heyKernel','BrowserPriv','BridgeCommonApi','appJsBridge','HeyVideoSniffer','HeytapReader',
+    // vivo（注入 100+ 全局，仅取标志位，全量见 windowKeys）
+    'vivoManualAdBlock','blockAdvertise','VIVO_IFRAME','getVivoAndroidVersion'
+  ].forEach(function(k){ probe[k]=introspect(k); });
   try{ probe['android.webview']= (w.android!=null && w.android.webview!==undefined) ? introspectObj(w.android.webview) : 'no-android.webview'; }catch(e){ probe['android.webview']='err'; }
+
+  // Media Integrity API（§4 密码学向量）：不止内省，实际调用 getExperimental… 观测结果——
+  // 无接口=老WebView(<130)/非WebView；resolve=真WebView≥130未禁用；reject(如 API_DISABLED_BY_APPLICATION)=app 主动禁用。
+  let mediaIntegrity=null;
+  try{
+    var awv=(w.android&&w.android.webview)||null;
+    if(awv&&typeof awv.getExperimentalMediaIntegrityTokenProvider==='function'){
+      try{
+        var provider=await awv.getExperimentalMediaIntegrityTokenProvider({cloudProjectNumber:1});
+        mediaIntegrity={available:true, providerObtained:true, providerType:typeof provider, providerKeys:(provider?Object.getOwnPropertyNames(provider):null)};
+      }catch(err){ mediaIntegrity={available:true, providerObtained:false, err:String(err), errName:(err&&err.name)||null}; }
+    }else{ mediaIntegrity={available:false}; }
+  }catch(e){ mediaIntegrity={available:'err', err:String(e)}; }
 
   const feat={};
   for(const k of ["Notification","RTCPeerConnection","SharedArrayBuffer","PaymentRequest","speechSynthesis"]) feat["window."+k]=typ(w[k]);
   for(const k of ["bluetooth","usb","serial","share","getInstalledRelatedApps","deviceMemory","hardwareConcurrency","webdriver","pdfViewerEnabled"]) feat["navigator."+k]=has(n,k);
 
   let webgl=null;
-  try{ const c=document.createElement('canvas'); const gl=c.getContext('webgl'); if(gl){ const dbg=gl.getExtension('WEBGL_debug_renderer_info'); webgl={ unmaskedVendor:dbg?gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL):null, unmaskedRenderer:dbg?gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL):null }; } }catch(e){}
+  try{ const c=document.createElement('canvas'); const gl=c.getContext('webgl'); if(gl){ const dbg=gl.getExtension('WEBGL_debug_renderer_info');
+    const gp=function(p){ try{ var v=gl.getParameter(p); return (v && typeof v!=='string' && v.length!==undefined) ? Array.from(v) : v; }catch(e){ return 'err'; } };
+    webgl={ vendor:gp(gl.VENDOR), renderer:gp(gl.RENDERER), version:gp(gl.VERSION), shadingLang:gp(gl.SHADING_LANGUAGE_VERSION),
+      unmaskedVendor:dbg?gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL):null, unmaskedRenderer:dbg?gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL):null,
+      maxTextureSize:gp(gl.MAX_TEXTURE_SIZE), maxCubeMapSize:gp(gl.MAX_CUBE_MAP_TEXTURE_SIZE), maxRenderbufferSize:gp(gl.MAX_RENDERBUFFER_SIZE),
+      maxViewportDims:gp(gl.MAX_VIEWPORT_DIMS), maxVertexAttribs:gp(gl.MAX_VERTEX_ATTRIBS), maxVertexUniformVectors:gp(gl.MAX_VERTEX_UNIFORM_VECTORS),
+      maxFragmentUniformVectors:gp(gl.MAX_FRAGMENT_UNIFORM_VECTORS), maxVaryingVectors:gp(gl.MAX_VARYING_VECTORS), maxCombinedTextureImageUnits:gp(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS),
+      aliasedLineWidthRange:gp(gl.ALIASED_LINE_WIDTH_RANGE), aliasedPointSizeRange:gp(gl.ALIASED_POINT_SIZE_RANGE),
+      extensions:(function(){ try{ return gl.getSupportedExtensions(); }catch(e){ return 'err'; } })() };
+    try{ var vsp=gl.getShaderPrecisionFormat(gl.VERTEX_SHADER,gl.HIGH_FLOAT), fsp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);
+      webgl.highFloat={ vertex:vsp?[vsp.rangeMin,vsp.rangeMax,vsp.precision]:null, fragment:fsp?[fsp.rangeMin,fsp.rangeMax,fsp.precision]:null }; }catch(e){}
+  } }catch(e){}
+
+  // ==== Tier2 引擎版本 delta 指纹（伪装机制不碰、147≠135 必漏；同设备逐项对比 WebView vs 厂商浏览器）====
+  function cyrb53(str,seed){ seed=seed>>>0; var h1=0xdeadbeef^seed,h2=0x41c6ce57^seed; for(var i=0,ch;i<str.length;i++){ ch=str.charCodeAt(i); h1=Math.imul(h1^ch,2654435761); h2=Math.imul(h2^ch,1597334677); } h1=Math.imul(h1^(h1>>>16),2246822507); h1^=Math.imul(h2^(h2>>>13),3266489909); h2=Math.imul(h2^(h2>>>16),2246822507); h2^=Math.imul(h1^(h1>>>13),3266489909); return (4294967296*(2097151&h2)+(h1>>>0)).toString(16); }
+
+  // Canvas 2D 指纹（文字+emoji 压 Skia/字体光栅；引擎版本变 → hash 变）
+  let canvasFp=null;
+  try{ var cv=document.createElement('canvas'); cv.width=300; cv.height=60; var cx=cv.getContext('2d');
+    cx.textBaseline='top'; cx.font="14px 'Arial'"; cx.fillStyle='#f60'; cx.fillRect(125,1,62,20);
+    cx.fillStyle='#069'; cx.fillText('Cwm fjordbank glyphs vext quiz 😃',2,15);
+    cx.fillStyle='rgba(102,204,0,0.7)'; cx.fillText('Cwm fjordbank glyphs vext quiz 😃',4,17);
+    var du=cv.toDataURL(); canvasFp={hash:cyrb53(du), len:du.length};
+  }catch(e){ canvasFp='err:'+e; }
+
+  // AudioContext 指纹（OfflineAudioContext 不需手势；DSP 随构建/引擎变）——时限 1.5s 兜底不挂起
+  let audioFp=null;
+  try{ var OAC=w.OfflineAudioContext||w.webkitOfflineAudioContext;
+    if(OAC){ audioFp=await Promise.race([ (async function(){
+        var ac=new OAC(1,44100,44100); var osc=ac.createOscillator(); osc.type='triangle'; osc.frequency.value=10000;
+        var cmp=ac.createDynamicsCompressor(); try{ cmp.threshold.value=-50; cmp.knee.value=40; cmp.ratio.value=12; cmp.attack.value=0; cmp.release.value=0.25; }catch(e){}
+        osc.connect(cmp); cmp.connect(ac.destination); osc.start(0); var buf=await ac.startRendering(); var d=buf.getChannelData(0);
+        var sum=0; for(var i=4500;i<5500;i++) sum+=Math.abs(d[i]); return {hash:cyrb53(Array.prototype.join.call(d.subarray(4500,5500),',')), sum:sum};
+      })(), new Promise(function(r){ setTimeout(function(){ r('timeout'); },1500); }) ]); }
+    else{ audioFp={available:false}; }
+  }catch(e){ audioFp='err:'+e; }
+
+  // 字体探测（宽度法；含 Xiaomi MiSans/mipro、三星等厂商字体 → 设备信号）
+  let fonts=null;
+  try{ var bases=['monospace','sans-serif','serif']; var cand=['Roboto','Noto Sans CJK SC','Noto Sans SC','Noto Color Emoji','MiSans','mipro','Miui','Source Han Sans','Droid Sans','Samsung Sans','sans-serif-condensed','sans-serif-thin','sans-serif-medium'];
+    var sp=document.createElement('span'); sp.style.cssText='position:absolute;left:-9999px;top:-9999px;font-size:72px'; sp.textContent='mmmmmmmmmlli你好'; document.body.appendChild(sp);
+    var bw={}; bases.forEach(function(b){ sp.style.fontFamily=b; bw[b]=sp.offsetWidth+'x'+sp.offsetHeight; });
+    var hitF=[]; cand.forEach(function(f){ var found=false; bases.forEach(function(b){ sp.style.fontFamily="'"+f+"',"+b; if(sp.offsetWidth+'x'+sp.offsetHeight!==bw[b]) found=true; }); if(found) hitF.push(f); });
+    document.body.removeChild(sp); fonts=hitF;
+  }catch(e){ fonts='err:'+e; }
+
+  // 编解码 / EME（canPlayType / MediaRecorder / Widevine 稳健性 → 构建能力，L1/L3 tell）——Widevine 时限 1.5s
+  let mediaCodecs=null;
+  try{ mediaCodecs={video:{},audio:{},recorder:null,widevine:null};
+    var ve=document.createElement('video'); ['video/mp4;codecs="avc1.42E01E"','video/mp4;codecs="hev1.1.6.L93.B0"','video/webm;codecs="vp9"','video/mp4;codecs="av01.0.05M.08"'].forEach(function(cc){ mediaCodecs.video[cc]=ve.canPlayType(cc); });
+    var ae=document.createElement('audio'); ['audio/mpeg','audio/mp4;codecs="mp4a.40.2"','audio/webm;codecs="opus"','audio/ogg;codecs="vorbis"'].forEach(function(cc){ mediaCodecs.audio[cc]=ae.canPlayType(cc); });
+    if(w.MediaRecorder&&MediaRecorder.isTypeSupported){ mediaCodecs.recorder={}; ['video/webm','video/webm;codecs="vp9"','video/mp4','audio/webm;codecs="opus"'].forEach(function(cc){ mediaCodecs.recorder[cc]=MediaRecorder.isTypeSupported(cc); }); }
+    if(n.requestMediaKeySystemAccess){ mediaCodecs.widevine=await Promise.race([ (async function(){
+        var out={}; for(const rob of ['SW_SECURE_DECODE','HW_SECURE_ALL']){ try{ await n.requestMediaKeySystemAccess('com.widevine.alpha',[{initDataTypes:['cenc'],videoCapabilities:[{contentType:'video/mp4;codecs="avc1.42E01E"',robustness:rob}]}]); out[rob]=true; }catch(e2){ out[rob]=false; } } return out;
+      })(), new Promise(function(r){ setTimeout(function(){ r('timeout'); },1500); }) ]); }
+  }catch(e){ mediaCodecs='err:'+e; }
+
+  // performance.memory（构建/配置 tell）+ storage 配额
+  let perfMemory=null; try{ if(w.performance&&performance.memory){ perfMemory={jsHeapSizeLimit:performance.memory.jsHeapSizeLimit,totalJSHeapSize:performance.memory.totalJSHeapSize}; } }catch(e){ perfMemory='err'; }
+  let storageEstimate=null; try{ if(n.storage&&n.storage.estimate){ var est=await n.storage.estimate(); storageEstimate={quota:est.quota,usage:est.usage}; } }catch(e){ storageEstimate='err'; }
 
   // ① 补充：screen / 时区 / connection / 媒体查询 / 通知权限一致性 / 语音数
   let scr=null; try{ scr={w:s.width,h:s.height,availW:s.availWidth,availH:s.availHeight,colorDepth:s.colorDepth,pixelDepth:s.pixelDepth,orientation:(s.orientation&&s.orientation.type)||null}; }catch(e){ scr='err'; }
   let tz=null,locale=null,tzOffset=null; try{ var ro=Intl.DateTimeFormat().resolvedOptions(); tz=ro.timeZone; locale=ro.locale; tzOffset=new Date().getTimezoneOffset(); }catch(e){}
   let conn=null; try{ var cn=n.connection||n.mozConnection||n.webkitConnection; conn=cn?{effectiveType:cn.effectiveType,downlink:cn.downlink,rtt:cn.rtt,saveData:cn.saveData,type:cn.type}:null; }catch(e){ conn='err'; }
   let mq=null; try{ var q=function(x){return matchMedia(x).matches}; mq={coarsePointer:q('(pointer:coarse)'),noHover:q('(hover:none)'),dark:q('(prefers-color-scheme:dark)'),reducedMotion:q('(prefers-reduced-motion:reduce)')}; }catch(e){ mq='err'; }
-  let notif=null,permNotif=null;
+  let notif=null,permNotif=null,perms=null;
   try{ notif=(typeof Notification!=='undefined')?Notification.permission:'no-Notification'; }catch(e){ notif='err'; }
   try{ if(n.permissions&&n.permissions.query){ var st=await n.permissions.query({name:'notifications'}); permNotif=st.state; }else{ permNotif='no-permissions.query'; } }catch(e){ permNotif='err:'+e; }
+  // 补回：geolocation/camera/microphone 权限态（旧本地版有，线上曾删）
+  try{ if(n.permissions&&n.permissions.query){ perms={}; for(const pn of ['geolocation','camera','microphone']){ try{ perms[pn]=(await n.permissions.query({name:pn})).state; }catch(e2){ perms[pn]='err'; } } }else{ perms='no-permissions.query'; } }catch(e){ perms='err'; }
   let speechVoices=null;
   try{ if(w.speechSynthesis){ speechVoices=speechSynthesis.getVoices().length;
     if(speechVoices===0){ await new Promise(function(r){ var t=setTimeout(r,400); try{ speechSynthesis.onvoiceschanged=function(){clearTimeout(t);r();}; }catch(e){} }); speechVoices=speechSynthesis.getVoices().length; } } }catch(e){ speechVoices='err'; }
@@ -91,15 +193,17 @@ function copyOut(){var el=document.getElementById('o');el.focus();el.select();tr
     ua: n.userAgent, platform: n.platform, vendor: n.vendor,
     languages: n.languages, hardwareConcurrency: n.hardwareConcurrency, deviceMemory: n.deviceMemory,
     maxTouchPoints: n.maxTouchPoints, webdriver: has(n,'webdriver'),
-    language:n.language, appName:n.appName, appVersion:n.appVersion, product:n.product, productSub:n.productSub, vendorSub:n.vendorSub, oscpu:n.oscpu, cookieEnabled:n.cookieEnabled, doNotTrack:n.doNotTrack, onLine:n.onLine, pdfViewerEnabled:n.pdfViewerEnabled,
+    language:n.language, appName:n.appName, appCodeName:n.appCodeName, appVersion:n.appVersion, product:n.product, productSub:n.productSub, vendorSub:n.vendorSub, oscpu:n.oscpu, cookieEnabled:n.cookieEnabled, doNotTrack:n.doNotTrack, onLine:n.onLine, pdfViewerEnabled:n.pdfViewerEnabled,
     screen: scr, timezone: tz, locale: locale, tzOffset: tzOffset, connection: conn, mediaQueries: mq,
-    notificationPermission: notif, permQueryNotifications: permNotif, speechVoices: speechVoices,
+    notificationPermission: notif, permQueryNotifications: permNotif, permissions: perms, speechVoices: speechVoices,
     userAgentData: n.userAgentData?{brands:n.userAgentData.brands,mobile:n.userAgentData.mobile,platform:n.userAgentData.platform}:null,
     highEntropy, heErr,
     chrome: chromeObj,
     plugins: (function(){try{var a=[];for(const p of n.plugins)a.push(p.name);return a}catch(e){return 'err'}})(),
     win:{innerW:w.innerWidth,innerH:w.innerHeight,outerW:w.outerWidth,outerH:w.outerHeight,dpr:w.devicePixelRatio},
-    webgl, features: feat, probe,
+    mimeTypes: (function(){try{var a=[];for(const m of n.mimeTypes)a.push(m.type);return a}catch(e){return 'err'}})(),
+    webgl, features: feat, probe, mediaIntegrity, reqHeaders,
+    canvas: canvasFp, audio: audioFp, fonts, mediaCodecs, perfMemory, storageEstimate,
     windowKeys: Object.getOwnPropertyNames(w)
   };
 
