@@ -74,11 +74,26 @@ function copyOut(){var el=document.getElementById('o');el.focus();el.select();tr
   let webgl=null;
   try{ const c=document.createElement('canvas'); const gl=c.getContext('webgl'); if(gl){ const dbg=gl.getExtension('WEBGL_debug_renderer_info'); webgl={ unmaskedVendor:dbg?gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL):null, unmaskedRenderer:dbg?gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL):null }; } }catch(e){}
 
+  // ① 补充：screen / 时区 / connection / 媒体查询 / 通知权限一致性 / 语音数
+  let scr=null; try{ scr={w:s.width,h:s.height,availW:s.availWidth,availH:s.availHeight,colorDepth:s.colorDepth,pixelDepth:s.pixelDepth,orientation:(s.orientation&&s.orientation.type)||null}; }catch(e){ scr='err'; }
+  let tz=null,locale=null,tzOffset=null; try{ var ro=Intl.DateTimeFormat().resolvedOptions(); tz=ro.timeZone; locale=ro.locale; tzOffset=new Date().getTimezoneOffset(); }catch(e){}
+  let conn=null; try{ var cn=n.connection||n.mozConnection||n.webkitConnection; conn=cn?{effectiveType:cn.effectiveType,downlink:cn.downlink,rtt:cn.rtt,saveData:cn.saveData,type:cn.type}:null; }catch(e){ conn='err'; }
+  let mq=null; try{ var q=function(x){return matchMedia(x).matches}; mq={coarsePointer:q('(pointer:coarse)'),noHover:q('(hover:none)'),dark:q('(prefers-color-scheme:dark)'),reducedMotion:q('(prefers-reduced-motion:reduce)')}; }catch(e){ mq='err'; }
+  let notif=null,permNotif=null;
+  try{ notif=(typeof Notification!=='undefined')?Notification.permission:'no-Notification'; }catch(e){ notif='err'; }
+  try{ if(n.permissions&&n.permissions.query){ var st=await n.permissions.query({name:'notifications'}); permNotif=st.state; }else{ permNotif='no-permissions.query'; } }catch(e){ permNotif='err:'+e; }
+  let speechVoices=null;
+  try{ if(w.speechSynthesis){ speechVoices=speechSynthesis.getVoices().length;
+    if(speechVoices===0){ await new Promise(function(r){ var t=setTimeout(r,400); try{ speechSynthesis.onvoiceschanged=function(){clearTimeout(t);r();}; }catch(e){} }); speechVoices=speechSynthesis.getVoices().length; } } }catch(e){ speechVoices='err'; }
+
   const dump={
     src, ts: Date.now(),
     ua: n.userAgent, platform: n.platform, vendor: n.vendor,
     languages: n.languages, hardwareConcurrency: n.hardwareConcurrency, deviceMemory: n.deviceMemory,
     maxTouchPoints: n.maxTouchPoints, webdriver: has(n,'webdriver'),
+    language:n.language, appName:n.appName, appVersion:n.appVersion, product:n.product, productSub:n.productSub, vendorSub:n.vendorSub, oscpu:n.oscpu, cookieEnabled:n.cookieEnabled, doNotTrack:n.doNotTrack, onLine:n.onLine, pdfViewerEnabled:n.pdfViewerEnabled,
+    screen: scr, timezone: tz, locale: locale, tzOffset: tzOffset, connection: conn, mediaQueries: mq,
+    notificationPermission: notif, permQueryNotifications: permNotif, speechVoices: speechVoices,
     userAgentData: n.userAgentData?{brands:n.userAgentData.brands,mobile:n.userAgentData.mobile,platform:n.userAgentData.platform}:null,
     highEntropy, heErr,
     chrome: chromeObj,
