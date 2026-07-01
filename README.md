@@ -24,10 +24,33 @@
 
 ## 收集器
 
-GitHub Pages 是静态托管、收不了 POST，所以结果 POST 到 **webhook.site**（`index.html` 里的 `COLLECTOR`）。
-- 换成你自己的：`curl -X POST https://webhook.site/token` 建一个，把返回的 uuid 填进 `COLLECTOR`。
-- 读取收到的数据：`GET https://webhook.site/token/<uuid>/requests`。
-- WebView 会在这个 POST 上带 `X-Requested-With: <宿主包名>`，收集器能一并记录（用来验证是不是被 app 嵌的 WebView）。
+GitHub Pages 是静态托管、收不了 POST，结果存到 **Supabase**（Postgres 表 `probe_results`）。选它是因为：
+- **不被 OEM 浏览器广告拦截**——小米/vivo/OPPO 自带内容拦截会封 `webhook.site` 这类 webhook/exfil 域名，导致上报（连 `no-cors`）静默失败；`*.supabase.co` 是后端服务域名，不在黑名单。
+- **正常回 CORS 头**——请求能读回执，页面状态如实显示，无 “Failed to fetch” 误报。
+- **持久入库、可 SQL 查询**——跨组合对比方便，不像 webhook.site 只留 7 天。
+
+配置（换成你自己的项目）：
+
+1. 建表 + RLS（SQL Editor 里跑）——只给 `anon` 角色 INSERT、不给读：
+   ```sql
+   create table if not exists public.probe_results (
+     id bigint generated always as identity primary key,
+     created_at timestamptz not null default now(),
+     src text, ua text, has_chrome boolean, payload jsonb
+   );
+   alter table public.probe_results enable row level security;
+   create policy "anon can insert" on public.probe_results
+     for insert to anon with check (true);
+   grant insert on table public.probe_results to anon;
+   ```
+2. `index.html` 里填 `SUPABASE_URL` 和 `SUPABASE_ANON`（**anon key 只能 INSERT，公开无妨**；RLS 挡住读/改/删）。
+3. 读取用 **service_role** key（**切勿进仓库**）：
+   ```
+   curl 'https://<ref>.supabase.co/rest/v1/probe_results?select=*&order=created_at.desc' \
+     -H "apikey: <service_role>" -H "Authorization: Bearer <service_role>"
+   ```
+
+> 注：`X-Requested-With` 这类请求头 JS 读不到、Supabase 也不入表；WebView 是否带该头（宿主包名）需另用能记录请求头的端点验证——本项目该结论已在 survey 报告确认，此处不再依赖。
 
 ## 背景
 
