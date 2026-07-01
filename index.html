@@ -89,12 +89,14 @@ function copyOut(){var t=document.getElementById('o').textContent;try{navigator.
   document.getElementById('h').textContent = src+'  window.chrome='+(chromeObj?'PRESENT':'undefined')+'  MiWebViewDetector='+(probe.MiWebViewDetector!=='undefined'?'有':'无');
   document.getElementById('o').textContent = JSON.stringify(dump,null,2);
 
-  // 发到收集器（text/plain = 简单请求，跨域无预检；fire-and-forget）
+  // 发到收集器：text/plain + no-cors = 简单请求、跨域无预检、fire-and-forget。
+  // webhook.site 不回 Access-Control-Allow-Origin，用默认 cors 模式会误报
+  // “Failed to fetch”（其实 POST 已到达服务端），故用 no-cors 拿 opaque 响应、不读回执。
   try{
-    await fetch(COLLECTOR, {method:'POST', headers:{'Content-Type':'text/plain'}, body: JSON.stringify(dump)});
-    document.getElementById('status').textContent = '✅ 已上报收集器 (src='+src+')';
+    await fetch(COLLECTOR, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'}, body: JSON.stringify(dump)});
+    document.getElementById('status').textContent = '✅ 已发送 (src='+src+')  —— opaque 无回执，后台核对';
   }catch(e){
-    document.getElementById('status').textContent = '⚠️ 上报失败:'+e+' —— 用上面「复制 JSON」手动发';
+    document.getElementById('status').textContent = '⚠️ 发送失败(疑被浏览器拦截):'+e+' —— 点上面「复制 JSON」发我';
   }
 })();
 </script>
