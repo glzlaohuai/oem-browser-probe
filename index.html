@@ -15,7 +15,7 @@
 </style>
 </head>
 <body>
-<script src="https://glzlaohuai.github.io/oem-browser-probe/eruda.js"></script><script>try{eruda.init();}catch(e){}</script>
+<script src="eruda.js"></script><script>try{eruda.init();}catch(e){}</script>
 
 <h3 id="h">probing…</h3>
 <div id="status">—</div>
@@ -39,13 +39,21 @@
 const SUPABASE_URL  = 'https://nzlbzcwlvpcbpkqigvnk.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im56bGJ6Y3dsdnBjYnBrcWlndm5rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4ODQzMzIsImV4cCI6MjA5ODQ2MDMzMn0.MdruKciObFcznirZES2y85OAFw7MARykBnZrjJ72KBY';
 // echo 端点：读回 JS 拿不到的真实请求头（X-Requested-With / Sec-CH-UA / Accept-Language）。同源 Edge Function。
-const ECHO_URL = SUPABASE_URL + '/functions/v1/echo-headers';
+const ECHO_URL = '/echo';
 
 function EV(x){var o=document.getElementById('er');try{var r=eval(x);var s=(typeof r==='object'&&r!==null)?(Object.prototype.toString.call(r)+' keys='+JSON.stringify(Object.getOwnPropertyNames(r)).slice(0,400)):String(r);o.textContent=x+'\n=> ['+typeof r+'] '+s;}catch(e){o.textContent=x+'\n!! '+e;}}
 function copyOut(){var el=document.getElementById('o');el.focus();el.select();try{el.setSelectionRange(0,999999);}catch(e){}var st=document.getElementById('status');var ok=false;try{ok=document.execCommand('copy');}catch(e){}if(ok){st.textContent='✅ 已复制，去对话粘贴发我';return;}if(navigator.clipboard){navigator.clipboard.writeText(el.value).then(function(){st.textContent='✅ 已复制，去对话粘贴发我';}).catch(function(){st.textContent='⚠️ 自动复制失败——文本已选中，手动点系统「复制」';});return;}st.textContent='⚠️ 文本已选中，手动点系统「复制」';}
 
 (async function(){
   const src = new URLSearchParams(location.search).get('src') || 'unknown';
+  const rid = new URLSearchParams(location.search).get('rid');
+  const gaid = new URLSearchParams(location.search).get('gaid') || null;
+  // 硬前置：URL 无 rid → 本次不采集、不入库（保证入库数据都带 rid、可关联）
+  if (!rid) {
+    document.getElementById('h').textContent = src + '  ⚠️ 缺 rid，未入库';
+    document.getElementById('status').textContent = '⚠️ URL 未带 rid → 本次不采集/不入库（硬前置）。请用带 rid 的地址（?rid=<唯一值>）。';
+    return;
+  }
   const typ = (v)=>{try{return typeof v}catch(e){return 'err'}};
   const has = (o,k)=>{try{const v=o[k];return (typeof v==='undefined')?false:(v===null?'null':typ(v))}catch(e){return 'err'}};
   const n = navigator, w = window, s = screen;
@@ -221,7 +229,7 @@ function copyOut(){var el=document.getElementById('o');el.focus();el.select();tr
         'Authorization':'Bearer ' + SUPABASE_ANON,
         'Prefer':'return=minimal'
       },
-      body: JSON.stringify({ src: dump.src, ua: dump.ua, has_chrome: !!chromeObj, payload: dump })
+      body: JSON.stringify({ src: dump.src, ua: dump.ua, has_chrome: !!chromeObj, request_id: rid, gaid: gaid, payload: dump })
     });
     if(resp.ok){
       document.getElementById('status').textContent = '✅ 已入库 Supabase (src='+src+', HTTP '+resp.status+')';
