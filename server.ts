@@ -41,3 +41,63 @@ export function buildNavRecord(url: URL, headers: Headers): NavRecord | null {
     headers: redact(headers),
   };
 }
+
+const ACCEPT_CH = [
+  "sec-ch-ua-full-version-list", "sec-ch-ua-model", "sec-ch-ua-platform-version",
+  "sec-ch-ua-arch", "sec-ch-ua-bitness", "sec-ch-ua-full-version", "sec-ch-ua-wow64",
+  "sec-ch-ua-form-factors",
+].join(", ");
+
+const CORS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "*",
+};
+
+export interface Deps {
+  readStatic: (name: string) => Promise<Uint8Array>;
+  insertNav: (rec: NavRecord) => Promise<void>;
+}
+
+export function makeHandler(deps: Deps) {
+  return async function handler(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+
+    if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+
+    // 同源 echo：回显服务器实收请求头（fetch 语境）
+    if (url.pathname === "/echo") {
+      const body = JSON.stringify({
+        headers: redact(req.headers), method: req.method, url: req.url, ts: new Date().toISOString(),
+      });
+      return new Response(body, {
+        headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    }
+
+    // 承载页：设 Accept-CH/Critical-CH；有 rid 则写导航头（各管各：失败仅记日志、不阻断）
+    if (url.pathname === "/" || url.pathname === "/index.html") {
+      const rec = buildNavRecord(url, req.headers);
+      if (rec) {
+        try { await deps.insertNav(rec); }
+        catch (e) { console.error("nav_headers insert failed:", e); }
+      }
+      const html = await deps.readStatic("index.html") as Uint8Array<ArrayBuffer>;
+      return new Response(html, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Accept-CH": ACCEPT_CH,
+          "Critical-CH": ACCEPT_CH,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    if (url.pathname === "/eruda.js") {
+      const js = await deps.readStatic("eruda.js") as Uint8Array<ArrayBuffer>;
+      return new Response(js, { headers: { "Content-Type": "application/javascript; charset=utf-8" } });
+    }
+
+    return new Response("not found", { status: 404 });
+  };
+}
