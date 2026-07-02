@@ -15,7 +15,7 @@ export function redact(headers: Headers): Record<string, string> {
 /** 是否已协商到高熵 CH：model（去引号去空格后非空）或 full-version-list 非空。 */
 export function hasHighEntropy(headers: Headers): boolean {
   const model = (headers.get("sec-ch-ua-model") ?? "").replace(/"/g, "").trim();
-  const fvl = (headers.get("sec-ch-ua-full-version-list") ?? "").trim();
+  const fvl = (headers.get("sec-ch-ua-full-version-list") ?? "").replace(/"/g, "").trim();
   return model !== "" || fvl !== "";
 }
 

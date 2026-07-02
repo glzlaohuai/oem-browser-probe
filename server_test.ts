@@ -2,11 +2,12 @@ import { assert, assertEquals } from "@std/assert";
 import { redact, hasHighEntropy, buildNavRecord } from "./server.ts";
 
 Deno.test("redact 剔除敏感头、保留其余", () => {
-  const h = new Headers({ "user-agent": "UA", "cookie": "secret", "x-requested-with": "com.app" });
+  const h = new Headers({ "user-agent": "UA", "cookie": "secret", "x-requested-with": "com.app", "authorization": "Bearer token123" });
   const out = redact(h);
   assertEquals(out["user-agent"], "UA");
   assertEquals(out["x-requested-with"], "com.app");
   assertEquals(out["cookie"], "[redacted]");
+  assertEquals(out["authorization"], "[redacted]");
 });
 
 Deno.test("hasHighEntropy: model 有值 → true", () => {
@@ -19,6 +20,10 @@ Deno.test("hasHighEntropy: 无高熵头 → false", () => {
 
 Deno.test("hasHighEntropy: model 空引号 → false", () => {
   assert(!hasHighEntropy(new Headers({ "sec-ch-ua-model": '""' })));
+});
+
+Deno.test("hasHighEntropy: full-version-list 空引号 → false", () => {
+  assert(!hasHighEntropy(new Headers({ "sec-ch-ua-full-version-list": '""' })));
 });
 
 Deno.test("buildNavRecord: 无 rid → null（硬前置）", () => {
