@@ -100,4 +100,5 @@ Deno.test("未知路径 → 404", async () => {
 Deno.test("OPTIONS → CORS 预检", async () => {
   const res = await makeHandler(testDeps([]))(new Request("https://x.dev/echo", { method: "OPTIONS" }));
   assert(res.headers.get("Access-Control-Allow-Methods")?.includes("POST"));
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), "*");
 });

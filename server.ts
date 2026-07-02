@@ -8,7 +8,7 @@ const REDACT = new Set([
 /** 遍历请求头为普通对象，敏感头替换为 [redacted]。 */
 export function redact(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of headers) out[k] = REDACT.has(k.toLowerCase()) ? "[redacted]" : v;
+  for (const [k, v] of headers) out[k] = REDACT.has(k) ? "[redacted]" : v;
   return out;
 }
 
@@ -55,15 +55,15 @@ const CORS: Record<string, string> = {
 };
 
 export interface Deps {
-  readStatic: (name: string) => Promise<Uint8Array>;
+  readStatic: (name: string) => Promise<Uint8Array<ArrayBuffer>>;
   insertNav: (rec: NavRecord) => Promise<void>;
 }
 
 export function makeHandler(deps: Deps) {
-  return async function handler(req: Request): Promise<Response> {
-    const url = new URL(req.url);
-
+  return async (req: Request): Promise<Response> => {
     if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+
+    const url = new URL(req.url);
 
     // 同源 echo：回显服务器实收请求头（fetch 语境）
     if (url.pathname === "/echo") {
@@ -78,11 +78,13 @@ export function makeHandler(deps: Deps) {
     // 承载页：设 Accept-CH/Critical-CH；有 rid 则写导航头（各管各：失败仅记日志、不阻断）
     if (url.pathname === "/" || url.pathname === "/index.html") {
       const rec = buildNavRecord(url, req.headers);
+      // serverless 下必须 await：handler 返回后实例可能被回收，fire-and-forget 的写库会被丢弃。
+      // 「各管各不阻断」= try/catch 吞掉写库错误让页面照返回，而非不等待。
       if (rec) {
         try { await deps.insertNav(rec); }
         catch (e) { console.error("nav_headers insert failed:", e); }
       }
-      const html = await deps.readStatic("index.html") as Uint8Array<ArrayBuffer>;
+      const html = await deps.readStatic("index.html");
       return new Response(html, {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
@@ -94,7 +96,7 @@ export function makeHandler(deps: Deps) {
     }
 
     if (url.pathname === "/eruda.js") {
-      const js = await deps.readStatic("eruda.js") as Uint8Array<ArrayBuffer>;
+      const js = await deps.readStatic("eruda.js");
       return new Response(js, { headers: { "Content-Type": "application/javascript; charset=utf-8" } });
     }
 
