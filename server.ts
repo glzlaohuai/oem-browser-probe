@@ -103,3 +103,28 @@ export function makeHandler(deps: Deps) {
     return new Response("not found", { status: 404 });
   };
 }
+
+async function realInsertNav(rec: NavRecord): Promise<void> {
+  const base = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!base || !key) throw new Error("missing SUPABASE_URL / SUPABASE_ANON_KEY env");
+  const r = await fetch(base.replace(/\/$/, "") + "/rest/v1/nav_headers", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": key,
+      "Authorization": "Bearer " + key,
+      "Prefer": "return=minimal",
+    },
+    body: JSON.stringify(rec),
+  });
+  if (!r.ok) throw new Error("nav_headers insert HTTP " + r.status + " " + (await r.text()).slice(0, 200));
+}
+
+function realReadStatic(name: string): Promise<Uint8Array<ArrayBuffer>> {
+  return Deno.readFile(new URL("./" + name, import.meta.url));
+}
+
+if (import.meta.main) {
+  Deno.serve(makeHandler({ readStatic: realReadStatic, insertNav: realInsertNav }));
+}
